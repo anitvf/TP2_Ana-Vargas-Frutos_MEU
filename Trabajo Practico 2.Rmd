@@ -1,0 +1,236 @@
+---
+title: "Trabajo_Practico 2"
+author: "Ana Vargas Frutos"
+date: "Septiembre, 2023"
+output: html_document
+---
+
+### Trabajo Práctico 2 - Instrumentos de análisis de datos II
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(ggmap)
+library(sf)
+library(ggplot2)
+library(skimr)
+```
+ 
+Este trabajo analiza la disponibilidad de estaciones de bicicletas públicas en la ciudad de Paris, para lo cual utiliza la base de datos del sistema Velib y la capa de distritos de la ciudad. La información contenida permitirá localizar cuál es el distrito de la ciudad de París con mayor disponbilidad de estaciones de bicicletas. 
+ 
+**1) Crear un repositorio público en la cuenta personal de Github  para el TP2**
+
+**2) Crear un proyecto en la computadora desde RStudio y vincular al repositorio de Github**
+
+**3) Crear un  script.R / Rmarkdown  guardarlo en el proyecto**
+
+
+
+Se carga la base de datos y se explora la base de datos: 
+
+```{r}
+dispon_velib_Paris <- read.csv2("velib-disponibilite-en-temps-reel.csv", sep = ";",  header =TRUE)
+```
+```{r}
+dim(dispon_velib_Paris)
+```
+
+
+```{r}
+head(dispon_velib_Paris)
+```
+
+```{r}
+tail(dispon_velib_Paris)
+```
+
+```{r}
+str(dispon_velib_Paris)
+```
+
+```{r}
+summary(dispon_velib_Paris)
+```
+Esta base de datos consiste en el registro de la disponbilidad de bicicletas en Paris y en las afueras de la ciudad, conteniendo datos de las estaciones, su ubicación, capacidad de la estación, disponibilidad de diferentes tipos de bicicletas según un registro horario y datos geográficos. 
+
+Se ordena la base de datos de la siguietne manera: 
+
+```{r}
+dispon_velib_Paris2 <- dispon_velib_Paris %>% 
+  rename(IDStat = Identifiant.station,
+         NameStat = Nom.station, 
+         Capacity = Capacité.de.la.station,
+         Num_Free_Doc= Nombre.bornettes.libres,
+         Num_BikeTotal = Nombre.total.vélos.disponibles,
+         Num_EBike= Vélos.électriques.disponibles,
+         Num_Bike= Vélos.mécaniques.disponibles,
+         Date=Actualisation.de.la.donnée,
+         Name_Com = Nom.communes.équipées,
+         GeoCoordinates = Coordonnées.géographiques)
+```
+
+Se modifican los datos de fecha y hora de registros: 
+
+```{r}
+dispon_velib_Paris2<- dispon_velib_Paris2%>%
+  mutate(Date=ymd_hms(Date))
+```
+
+
+```{r}
+dispon_velib_Paris2 <- dispon_velib_Paris2 %>%
+  mutate(month=month(Date, label=TRUE),
+         year=year(Date),
+         day=wday(Date, label=TRUE, abbr=FALSE), 
+         hour=hour(Date))
+```
+
+Al distinguir por año y mes, podemos observar la distribución de los registros, de la siguiente manera: 
+
+```{r}
+unique(dispon_velib_Paris2$month)
+```
+
+```{r}
+(tabla_mont <- dispon_velib_Paris2$month%>% 
+  table())
+```
+
+
+```{r}
+(tabla_mont <- dispon_velib_Paris2$year%>% 
+  table())
+
+```
+ 
+Los datos más relevantes son los del 2023, por lo que filtraremos esos datos: 
+
+```{r}
+dispon_velib_Paris_23 <- dispon_velib_Paris2 %>% 
+  filter(year==2023) %>% 
+  mutate(time_day=case_when(
+    hour>=as.numeric(6) ~ "morning",  
+    hour>=as.numeric(13) ~ "afternoon", 
+    hour>=as.numeric(20) ~ "night",
+    TRUE ~ "latenight"))
+```
+
+A fin de lograr curzar los datos del registro con lso datos espaciales, convertimos la tabla en una base de datos espacial. Para ello, obtenemos los datos de las coordenadas y la transformamos la nueva base: 
+
+```{r}
+dispon_velib_Paris_23_geo <- dispon_velib_Paris_23 %>% 
+  mutate(GeoCoordinates = strsplit(GeoCoordinates, ", ")) %>%   # Split the coordinates
+  mutate(longitude = as.numeric(sapply(GeoCoordinates, `[`, 2)), # Extract longitud
+         latitude = as.numeric(sapply(GeoCoordinates, `[`, 1))) %>%  # Extract latitude
+  st_as_sf(coords = c("longitude", "latitude"), crs = 4326)  # Create an sf object
+```
+ 
+```{r}
+dispon_velib_Paris_23_geo 
+```
+ 
+ **4. Visualización** 
+ 
+Descargamos los datos de los distritos: 
+```{r}
+distritos_Paris <- st_read("arrondissements/arrondissements.shp",
+                        stringsAsFactors = TRUE)
+```
+Podemos observar que ambas bases de datos espaciales trabajan con el mismo codigo CRS, por lo que no se requerirá cambios de proyecciones. 
+
+  
+Continuamos explorando la base de datos de Distritos:
+
+```{r}
+summary(distritos_Paris)
+```
+```{r}
+dim(distritos_Paris)
+```
+
+Esta base de datos cuenta con 20 observaciones correspondiente a los 20 distritos de la ciudad de París. Contiene, ademås, los datos geográficos, la superficie, el perímetro y los códigos de los distritos. 
+
+Exploramos la relación entre ambas bases de datos: 
+
+```{r}
+ggplot()+
+  geom_sf(data=distritos_Paris, colour= "red", size=1)+
+  geom_sf(data=dispon_velib_Paris_23_geo, color="blue", alpha=0.6)
+  
+```
+
+Como existen más datos de los necesarios así que cruzamos ambas bases de datos para filtrar espacialemente los datos que se encuentran dentro de Paris:
+
+```{r}
+dispon_velib_Paris_23_geo2 <- st_filter(dispon_velib_Paris_23_geo, distritos_Paris)
+```
+
+Verificamos el resultado: 
+```{r}
+ggplot()+
+  geom_sf(data=distritos_Paris, colour= "red", size=1)+
+  geom_sf(data=dispon_velib_Paris_23_geo2, color="blue", alpha=0.6)
+```  
+
+Unimos ambas bases y realizamos los cálculos para las visualizaciones: 
+
+```{r}
+dispon_velib_distrito<- st_join(dispon_velib_Paris_23_geo2,distritos_Paris)
+```
+
+```{r}
+dispon_velib_distrito2<- dispon_velib_distrito %>%
+  group_by(l_ar) %>%
+  summarise(Cantidad=n())
+```
+
+
+```{r}
+dispon_velib_distrito2 <- dispon_velib_distrito2 %>%
+  st_drop_geometry()
+```
+
+
+```{r}
+ggplot()+
+  geom_bar(data=dispon_velib_distrito2 %>%
+             top_n(5,Cantidad), aes(x=reorder(l_ar, -Cantidad), weight=Cantidad, fill=l_ar))+
+  labs(title="Cantidad de estaciones VELIB por distrito- Top 5",
+       x="Distrito",
+       y="Cantidad",
+       fill = "Distrito")+
+  theme_minimal()
+```
+
+Observamos que el Distrito 15 es el que cuenta con mayor cantidad de estaciones Velib, seguido por el Distrito 20, 13, 12 y 16. 
+
+Para una mejor localización de la distribución de las estaciones, utilizamos el mapa de distritos al cual agregamos el cálculo de las cantidades de estaciones por distrito. 
+
+```{r}
+ggplot(distritos_Paris %>% 
+  left_join(dispon_velib_distrito2) )+
+  geom_sf(aes(fill=Cantidad), color="white")+
+    labs(title = "Estaciones VELIB por distrito en Paris",
+         subtitle = "Distritos de París",
+         fill = "Cantidad",
+         caption= "Fuente: Vélib' - Localisation et caractéristique des stations") +
+  scale_fill_distiller(palette = "YlOrRd", direction = 1) +
+  theme_minimal()
+```
+
+Este mapa nos permite observar que aquellos distritos medianamente alejados del centro de la ciudad son los que cuentan con mayor cantida de estaciones. 
+
+
+
+  **5. Al finalizar, guardar el script.R / rmarkdown.Rmd y subir los cambios en el proyecto _local_ al repositorio _remoto_ de Github**
+
+  - Recordar la secuencia (por terminal o por la pestaña _GIT_ del panel de control de Rstudio):
+  
+    - `git pull`
+    - `git add -A`
+    - `git commit -m "acá el mensaje"`
+    - `git push`
+    
+  **6. Entrega: Una vez realizado los puntos anteriores, copiar el link del repositorio en la columna TP 2: (https://docs.google.com/spreadsheets/d/1zs4iAFX6D0qZTse62nVPRreOXxhb17DaPr2H5Qzc1is/edit#gid=0).**
+
+
